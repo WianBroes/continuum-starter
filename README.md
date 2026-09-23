@@ -19,7 +19,7 @@ Une mémoire pour ton assistant IA, en simples fichiers texte, qui **apprend de 
 2. Ouvre ton agent IA **dans ce dossier**.
 3. Dis bonjour.
 
-La première fois, l'agent installe Continuum pour ton système (Linux, macOS ou Windows) et vérifie que tout fonctionne. Tu n'as rien à faire, il te donne le résultat en une ligne. Ensuite, il se présente, te dit quelques pièges de l'IA, te propose une première règle (pas de flatterie) — que tu acceptes ou non — et te pose quelques questions courtes (ton nom, ta langue, ton âge, ton usage de l'IA, ce que tu attends de lui), auxquelles tu peux répondre « passe ». S'il est encore relié au dépôt en ligne d'où tu l'as copié, il coupe ce lien tout seul : rien de toi ne peut partir là-bas.
+La première fois, l'agent installe Continuum pour ton système (Linux, macOS ou Windows) et vérifie que tout fonctionne. Tu n'as rien à faire, il te donne le résultat en une ligne. Ensuite, il se présente, te dit quelques pièges de l'IA, puis te pose quelques questions à cocher (ta langue, ton nom, ton âge, ton usage de l'IA, ce que tu attends de lui) ; chacune se passe, ou se remplit à ta façon. L'une d'elles te propose une première règle : pas de flatterie. S'il est encore relié au dépôt en ligne d'où tu l'as copié, il coupe ce lien tout seul : rien de toi ne peut partir là-bas.
 
 C'est tout. Pas besoin de lire la suite : l'agent t'apprendra les gestes au moment où ils servent.
 

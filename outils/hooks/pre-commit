@@ -1,0 +1,33 @@
+#!/usr/bin/env bash
+# Refuse un commit qui touche un projet NN_*/ déclaré « travaille_sur » par une
+# AUTRE session ouverte, vivante ou incertaine. Forcer : git commit --no-verify
+# (décision de l'utilisateur). Activé par : git config core.hooksPath outils/hooks
+# (dans un projet à dépôt imbriqué : git -C NN_Projet config core.hooksPath ../outils/hooks)
+set -uo pipefail
+. "$(dirname "${BASH_SOURCE[0]}")/../lib.sh"
+
+moi=$(harnais_pid 2>/dev/null) && moi_emp=$(empreinte "$moi") || moi_emp=""
+projets=$(git diff --cached --name-only | grep -oE '^[0-9]{2}_[^/]+' | sort -u)
+# Projet à dépôt séparé imbriqué dans le vault (NN_Projet/.git, core.hooksPath ../outils/hooks) :
+# tout commit y touche ce projet.
+top=$(cd "$(git rev-parse --show-toplevel)" && pwd -P)   # Windows : C:/… → /c/…, comme RACINE
+if [ "$(dirname "$top")" = "$RACINE" ] && [[ $(basename "$top") =~ ^[0-9]{2}_ ]]; then
+  projets=$(basename "$top")
+fi
+[ -n "$projets" ] || exit 0
+
+refus=0
+for f in "$SESSIONS"/open/*/SESSION.md; do
+  [ -f "$f" ] || continue
+  emp=$(champ empreinte "$f")
+  [ "$emp" = "$moi_emp" ] && continue
+  v=$(vivant "$emp"); [ "$v" = mort ] && continue
+  for p in $(grep '^travaille_sur:' "$f" | cut -d' ' -f2-); do
+    if grep -qx "$p" <<< "$projets"; then
+      echo "pre-commit Continuum : $p est déclaré par $(basename "$(dirname "$f")") ($v)." >&2
+      refus=1
+    fi
+  done
+done
+[ $refus = 0 ] || echo "Commit refusé. Vérifier avec cette session, ou forcer : git commit --no-verify" >&2
+exit $refus

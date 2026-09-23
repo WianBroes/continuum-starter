@@ -1,0 +1,15 @@
+# Verrou et fichiers transitoires (AGENTS.md §0)
+.lock/
+.lock-casse/
+sessions/.creation-*
+
+# Secrets : jamais dans le dépôt (ASTUCES.md, piège « secret exposé »)
+.env
+.env.*
+*.key
+*.pem
+secrets/
+
+# Installation propre à chaque machine (outils/installer.sh)
+.continuum/
+continuum.cmd

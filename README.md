@@ -1,5 +1,7 @@
 # Continuum — gabarit vierge
 
+> *English version: the [`en/`](en/) folder — copy it and open your agent there.* Si tu utilises la version française, le dossier `en/` ne te sert pas : tu peux le supprimer.
+
 Une mémoire pour ton assistant IA, en simples fichiers texte, qui **apprend de toi** et devient ce que tu veux qu'il fasse pour toi.
 
 - Il remarque ta façon de travailler : ce que tu corriges, ce que tu répètes, ce qui t'agace.

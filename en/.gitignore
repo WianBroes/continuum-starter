@@ -1,0 +1,15 @@
+# Lock and transient files (AGENTS.md §0)
+.lock/
+.lock-break/
+sessions/.creating-*
+
+# Secrets: never in the repository (TIPS.md, « exposed secret » pitfall)
+.env
+.env.*
+*.key
+*.pem
+secrets/
+
+# Machine-specific installation (tools/install.sh)
+.continuum/
+continuum.cmd

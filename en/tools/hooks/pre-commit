@@ -1,0 +1,33 @@
+#!/usr/bin/env bash
+# Refuses a commit touching an NN_*/ project declared « working_on » by ANOTHER
+# open session, alive or uncertain. Force: git commit --no-verify
+# (the user's decision). Enabled by: git config core.hooksPath tools/hooks
+# (in a project with its own nested repository: git -C NN_Project config core.hooksPath ../tools/hooks)
+set -uo pipefail
+. "$(dirname "${BASH_SOURCE[0]}")/../lib.sh"
+
+me=$(harness_pid 2>/dev/null) && my_fp=$(fingerprint "$me") || my_fp=""
+projects=$(git diff --cached --name-only | grep -oE '^[0-9]{2}_[^/]+' | sort -u)
+# Project with its own repository nested in the vault (NN_Project/.git, core.hooksPath ../tools/hooks):
+# every commit there touches that project.
+top=$(cd "$(git rev-parse --show-toplevel)" && pwd -P)   # Windows: C:/… → /c/…, like ROOT
+if [ "$(dirname "$top")" = "$ROOT" ] && [[ $(basename "$top") =~ ^[0-9]{2}_ ]]; then
+  projects=$(basename "$top")
+fi
+[ -n "$projects" ] || exit 0
+
+refused=0
+for f in "$SESSIONS"/open/*/SESSION.md; do
+  [ -f "$f" ] || continue
+  fp=$(field fingerprint "$f")
+  [ "$fp" = "$my_fp" ] && continue
+  v=$(liveness "$fp"); [ "$v" = dead ] && continue
+  for p in $(grep '^working_on:' "$f" | cut -d' ' -f2-); do
+    if grep -qx "$p" <<< "$projects"; then
+      echo "Continuum pre-commit: $p is declared by $(basename "$(dirname "$f")") ($v)." >&2
+      refused=1
+    fi
+  done
+done
+[ $refused = 0 ] || echo "Commit refused. Check with that session, or force: git commit --no-verify" >&2
+exit $refused

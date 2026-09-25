@@ -35,3 +35,7 @@ maj_harnais() {
 CWD_SUPPORTE=1
 pids_nommes() { pgrep -x "$1"; }
 cwd_de() { lsof -a -p "$1" -d cwd -Fn 2>/dev/null | sed -n 's/^n//p'; }
+
+# Pane (herdr/tmux) d'un autre process : non pris en charge (son environnement n'est pas lisible de façon
+# fiable) — pas de reprise d'une conversation après un redémarrage (protocols/orphelins.md, limites).
+pane_de() { :; }

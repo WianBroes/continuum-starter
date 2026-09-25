@@ -239,6 +239,78 @@ verifie "ouverture n°$((avant + 1)) : astuce $avant" 'grep -q "^Astuce $avant/$
 verifie "ouverture suivante : astuce suivante" 'grep -q "^Astuce $((avant + 1))/.*ASTUCE-B$" <<< "$s2"' 'echo "$s2" | tail -3'
 verifie "liste épuisée : plus d astuce" '! grep -q "^Astuce" <<< "$s3"' 'echo "$s3" | tail -3'
 
+echo "T20 — conversation reprise après redémarrage de la machine (identifiant de conversation)"
+# pane d'un autre process lu dans son environnement : Linux seulement (outils/os/*.sh, pane_de)
+if [ "$CONTINUUM_OS" != linux ]; then saute "reprise par identifiant de conversation (herdr)"; else
+export CONTINUUM_HARNAIS=sleep
+# faux herdr : `herdr agent get <pane>` → l'identifiant de conversation de ce pane, lu dans $CONV
+CONV=$(dirname "$V")/conversations; : > "$CONV"
+cat > "$(dirname "$V")/herdr" <<EOS
+#!/usr/bin/env bash
+c=\$(sed -n "s/^\$3 //p" "$CONV" | tail -1)
+[ -n "\$c" ] && echo "{\"result\":{\"agent\":{\"agent_session\":{\"kind\":\"id\",\"value\":\"\$c\"},\"pane_id\":\"\$3\"}}}"
+exit 0
+EOS
+chmod +x "$(dirname "$V")/herdr"; export CONTINUUM_HERDR=$(dirname "$V")/herdr
+conv() { echo "$1 $2" >> "$CONV"; }                          # conv <pane> <id> : conversation en cours dans ce pane
+dans_pane() { (cd "$V" && HERDR_PANE_ID=$1 harnais); }       # harnais vivant lancé depuis ce pane
+agent_pane() { local p=$1 pane=$2; shift 2; CONTINUUM_PID=$p HERDR_PANE_ID=$pane bash "$V/outils/session.sh" "$@"; }
+reboot() { sed -i "s|^empreinte: .*|empreinte: $(uname -n) boot-perime $2 1|" "$1"; }   # empreinte d'un boot passé
+# cas 1 — un autre agent ouvre après le redémarrage : la conversation reprise garde son dossier
+conv w6:p1 conv-A; P=$(dans_pane w6:p1); PIDS+=("$P")
+agent_pane "$P" w6:p1 ouvrir claude >/dev/null; IDP=$(dossier "$P")
+verifie "conversation inscrite dans l en-tête" 'grep -qx "conversation: conv-A" "$S/open/$IDP/SESSION.md"'
+reboot "$S/open/$IDP/SESSION.md" "$P"; tuer "$P"; P2=$(dans_pane w6:p1); PIDS+=("$P2")   # herdr relance conv-A
+Q=$(harnais); PIDS+=("$Q")
+sortie=$(agent "$Q" ouvrir pi)
+verifie "dossier repris au lieu d être clos" 'grep -q "repris (conversation reprise) : $IDP" <<< "$sortie"'
+verifie "le process repris retrouve son dossier" '[ "$(agent_pane "$P2" w6:p1 moi)" = "$IDP" ]'
+# cas 2 — même pane, NOUVELLE conversation (pas une reprise) : l'ancien dossier est clos, pas de suite_de
+reboot "$S/open/$IDP/SESSION.md" "$P2"; tuer "$P2"; conv w6:p1 conv-B; P3=$(dans_pane w6:p1); PIDS+=("$P3")
+sortie=$(agent_pane "$P3" w6:p1 ouvrir claude); IDP3=$(agent_pane "$P3" w6:p1 moi)
+verifie "nouvelle conversation dans le même pane : ancien dossier clos « harnais mort »" 'grep -q "clos (orphelin) : $IDP — harnais mort" <<< "$sortie"'
+verifie "… et nouvelle session sans suite_de" '[ "$IDP3" != "$IDP" ] && grep -qx "suite_de: " "$S/open/$IDP3/SESSION.md"'
+# cas 3 — clos « harnais mort » par un autre agent alors que la conversation revient ensuite : rouvert
+X=$(dans_pane w9:p3); PIDS+=("$X"); conv w9:p3 conv-X
+agent_pane "$X" w9:p3 ouvrir claude >/dev/null; IDX=$(dossier "$X")
+reboot "$S/open/$IDX/SESSION.md" "$X"; tuer "$X"; : > "$CONV.tmp"; grep -v '^w9:p3 ' "$CONV" > "$CONV.tmp"; mv "$CONV.tmp" "$CONV"
+agent "$Q" ouvrir pi >/dev/null                                     # conversation pas encore relancée : close
+verifie "sans conversation vivante : clos « harnais mort »" 'grep -q "harnais mort" "$S/closed/$IDX/SESSION.md"'
+conv w9:p3 conv-X; X2=$(dans_pane w9:p3); PIDS+=("$X2")
+verifie "la conversation revenue retrouve son dossier sans relancer le rituel (moi)" '[ "$(agent_pane "$X2" w9:p3 moi)" = "$IDX" ] && [ -d "$S/open/$IDX" ]'
+# cas 4 — c'est ma propre conversation qui relance le rituel : dossier conservé, aucun nouveau
+reboot "$S/open/$IDX/SESSION.md" "$X2"
+sortie=$(agent_pane "$X2" w9:p3 ouvrir claude)
+verifie "ma conversation reprise : « Session reprise », même dossier" 'grep -q "Session reprise : $IDX" <<< "$sortie" && [ "$(agent_pane "$X2" w9:p3 moi)" = "$IDX" ]'
+verifie "un seul dossier ouvert pour ce pane" '[ "$(grep -lx "pane: w9:p3" "$S"/open/*/SESSION.md | wc -l)" = 1 ]'
+# cas 5 — /clear dans le même process : autre conversation → ancien dossier clos, nouvelle session
+conv w9:p3 conv-X-clear
+sortie=$(agent_pane "$X2" w9:p3 ouvrir claude); IDX2=$(agent_pane "$X2" w9:p3 moi)
+verifie "/clear : ancienne conversation close « même process », nouvelle session" 'grep -q "même process" "$S/closed/$IDX/SESSION.md" && [ "$IDX2" != "$IDX" ]'
+# cas 6 — rouvert puis clos normalement : jamais rouvert ; après redémarrage, suite_de exact
+agent_pane "$X2" w9:p3 clore >/dev/null
+reboot "$S/sealed/$IDX2/SESSION.md" "$X2" 2>/dev/null || reboot "$S/closed/$IDX2/SESSION.md" "$X2"
+tuer "$X2"; X3=$(dans_pane w9:p3); PIDS+=("$X3")
+sortie=$(agent_pane "$X3" w9:p3 ouvrir claude); IDX3=$(agent_pane "$X3" w9:p3 moi)
+verifie "clôture normale jamais rouverte" '[ "$IDX3" != "$IDX2" ] && [ ! -d "$S/open/$IDX2" ]'
+verifie "conversation reprise après une vraie clôture → suite_de exact" 'grep -qx "suite_de: $IDX2" "$S/open/$IDX3/SESSION.md"'
+# cas 7 — un dossier repris puis clos normalement ne se fait pas rouvrir par sa vieille ligne « harnais mort »
+verifie "dossier repris (ligne harnais mort ancienne) non rouvert" '[ ! -d "$S/open/$IDX" ]'
+# cas 8 — etat : process d'une conversation close reconnu, pas annoncé « sans dossier »
+agent_pane "$X3" w9:p3 clore >/dev/null
+f=$(ls "$S"/*/"$IDX3"/SESSION.md); reboot "$f" "$X3"
+sortie=$(agent "$Q" etat)
+verifie "session close reconnue par conversation, pas « sans dossier »" '! sed -n "/SANS dossier/,/^[^ ]/p" <<< "$sortie" | grep -q "pid $X3 " && grep -q "pid $X3 .*session close : $IDX3" <<< "$sortie"'
+unset CONTINUUM_HARNAIS CONTINUUM_HERDR
+fi
+
+echo "T21 — clôture réécrite (deux « ## Pour BASE ») : seule la dernière va dans BASE"
+Z=$(harnais); PIDS+=("$Z"); agent "$Z" ouvrir claude >/dev/null
+printf '\n## Pour BASE\n\nJETON-T21-AVANT.\n\n## Pour BASE\n\nJETON-T21-APRES.\n' >> "$S/open/$(dossier "$Z")/SESSION.md"
+agent "$Z" clore >/dev/null
+verifie "dernière section retenue, la première ignorée" 'grep -q JETON-T21-APRES "$V/BASE.md" && ! grep -q JETON-T21-AVANT "$V/BASE.md"'
+
+
 echo "T8 — 50 ajouts concurrents en >> (lignes de 1000 caractères)"
 # 1000 : sous macOS, bash 3.2 écrit une ligne par morceaux de 1024 octets — au-delà, deux ajouts concurrents peuvent
 # se couper (CI 2026-09-23 : à 3000 puis 1500, un morceau d'exactement 1024 octets déplacé dans une autre ligne).

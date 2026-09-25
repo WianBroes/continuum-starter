@@ -36,3 +36,10 @@ maj_harnais() {
 CWD_SUPPORTE=1
 pids_nommes() { pgrep -x "$1"; }
 cwd_de() { readlink "/proc/$1/cwd" 2>/dev/null; }
+
+# Pane du terminal multiplexé (herdr, sinon tmux) où tourne ce process, lu dans son environnement. Vide si aucun.
+pane_de() {
+  local env
+  env=$(tr '\0' '\n' < "/proc/$1/environ" 2>/dev/null) || return 0
+  { sed -n 's/^HERDR_PANE_ID=//p' <<< "$env" | grep . || sed -n 's/^TMUX_PANE=//p' <<< "$env"; } | head -1
+}

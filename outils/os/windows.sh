@@ -61,3 +61,7 @@ maj_harnais() {
 CWD_SUPPORTE=0
 pids_nommes() { :; }
 cwd_de() { :; }
+
+# Pane (herdr/tmux) d'un autre process : non pris en charge — pas de reprise d'une conversation
+# après un redémarrage (protocols/orphelins.md, limites).
+pane_de() { :; }

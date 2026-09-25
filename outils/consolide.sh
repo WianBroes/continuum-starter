@@ -23,9 +23,10 @@ rendre() { verrou_rendre "$MOI" || true; rm -rf "$TMP"; }
 verrou_prendre "$MOI" consolide || { echo "Verrou occupé : la prochaine fusion prendra sessions/closed/."; rm -rf "$TMP"; exit 0; }
 trap rendre EXIT
 
-# section <fichier> <titre> : contenu sous « ## titre », sans lignes vides en tête/queue
+# section <fichier> <titre> : contenu sous « ## titre », sans lignes vides en tête/queue.
+# Titre présent plusieurs fois (clôture réécrite après une reprise) : seule la dernière compte.
 section() {
-  awk -v t="## $2" '$0==t {on=1; next} /^## / {on=0} on {l[++n]=$0}
+  awk -v t="## $2" '$0==t {on=1; n=0; next} /^## / {on=0} on {l[++n]=$0}
     END {d=1; while (d<=n && l[d]=="") d++; f=n; while (f>=d && l[f]=="") f--; for (i=d; i<=f; i++) print l[i]}' "$1"
 }
 

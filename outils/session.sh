@@ -20,7 +20,21 @@ mon_dossier() {
   for d in "$SESSIONS"/open/*/; do
     [ "$(champ empreinte "$d/SESSION.md")" = "$MOI_EMP" ] && { basename "$d"; return; }
   done
+  # ma conversation, reprise après un redémarrage (empreinte périmée) : son dossier m'est rattaché
+  [ -n "$MOI_CONV" ] || return 1
+  local f
+  while IFS= read -r f; do
+    reprendre "$f" >/dev/null && { basename "$(dirname "$f")"; return; }
+  done < <(grep -lsxF "conversation: $MOI_CONV" "$SESSIONS"/open/*/SESSION.md "$SESSIONS"/closed/*/SESSION.md)
   return 1
+}
+
+# plus_recent : parmi les chemins lus sur l'entrée (un par ligne), le dernier modifié ; rien si aucun.
+# ls -t (GNU et BSD, précision sub-seconde) ; pas de xargs -r (GNU seulement) ; chemins avec espaces possibles
+plus_recent() {
+  local f l=()
+  while IFS= read -r f; do [ -z "$f" ] || l+=("$f"); done
+  [ ${#l[@]} -eq 0 ] || ls -t "${l[@]}" | head -1
 }
 
 # clore_orphelin <id> <raison> — mort certain : clos sans demander (protocols/orphelins.md)
@@ -33,10 +47,83 @@ clore_orphelin() {
 # Harnais actifs sur cette machine dont le dossier de travail est dans le vault
 # mais qui n'ont pas de dossier de session (rituel jamais lancé). Linux, macOS (CWD_SUPPORTE).
 HARNAIS_CONNUS=${CONTINUUM_HARNAIS:-claude|pi|codex|opencode|gemini|aider|hermes}
+
+# --- Reprise d'une conversation qui a survécu à un redémarrage de la machine -------------
+# L'empreinte (machine boot_id pid starttime) change au redémarrage, alors que herdr relance la
+# conversation (`--resume <id>`) dans un process neuf. Le lien exact est l'identifiant de
+# conversation du harnais, que herdr tient par pane (`agent_session`, rapporté par ses intégrations
+# claude/pi/…) : même id = même conversation ; un nouvel agent dans le même pane, ou un /clear, a
+# un autre id. Le pane seul ne suffit pas. Sans herdr (ou sans intégration, ou hors Linux) : pas
+# d'id, pas de reprise — le dossier est clos « harnais mort » comme avant.
+
+# conversation <pid> — identifiant de la conversation portée par ce process (via herdr), vide si inconnu
+conversation() {
+  local pane
+  pane=$(pane_de "$1"); [ -n "$pane" ] || return 0
+  command -v "${CONTINUUM_HERDR:-herdr}" >/dev/null || return 0
+  { timeout 3 "${CONTINUUM_HERDR:-herdr}" agent get "$pane" 2>/dev/null |
+      grep -o '"agent_session":{[^}]*}' | sed -n 's/.*"value":"\([^"]*\)".*/\1/p' | head -1; } || true
+}
+MOI_CONV=$(conversation "$MOI_PID")
+
+# pid_de_conversation <id> — harnais vivant, dossier de travail dans le vault, qui porte cette conversation
+pid_de_conversation() {
+  local p cwd
+  [ -n "$1" ] && [ "$CWD_SUPPORTE" = 1 ] || return 1
+  for p in $(pids_nommes "$HARNAIS_CONNUS"); do
+    cwd=$(cwd_de "$p") && [ -n "$cwd" ] || continue
+    case $cwd/ in "$RACINE"/*) ;; *) continue ;; esac
+    [ "$(conversation "$p")" = "$1" ] && { echo "$p"; return 0; }
+  done
+  return 1
+}
+
+# reprenable <SESSION.md> — dossier dont le process est mort sans vraie clôture : ouvert à empreinte
+# morte, ou clos a posteriori « harnais mort » — seule la *dernière* section « ## Fin » compte (un
+# dossier repris puis clos normalement n'est jamais rouvert).
+reprenable() {
+  case $1 in
+    "$SESSIONS"/open/*) [ "$(vivant "$(champ empreinte "$1")")" = mort ] ;;
+    "$SESSIONS"/closed/*) awk '/^## Fin/ {s=""} {s=s $0 "\n"} END {printf "%s", s}' "$1" |
+                            grep -q '^> Clos a posteriori.* — harnais mort\.$' ;;
+    *) return 1 ;;
+  esac
+}
+
+# reprendre <SESSION.md> — dossier reprenable dont la conversation tourne encore dans un process neuf :
+# empreinte remise sur ce process, rendu à open/ s'il avait été clos. Renvoie 0 si repris.
+reprendre() {
+  local f=$1 d id conv p
+  reprenable "$f" || return 1
+  conv=$(champ conversation "$f"); [ -n "$conv" ] || return 1
+  p=$(pid_de_conversation "$conv") || return 1
+  # un dossier par process : s'il en a déjà un ouvert, ne rien rattacher
+  grep -qsxF "empreinte: $(empreinte "$p")" "$SESSIONS"/open/*/SESSION.md && return 1
+  d=$(dirname "$f"); id=$(basename "$d")
+  # pas de sed -i (options différentes GNU/BSD)
+  sed "s|^empreinte: .*|empreinte: $(empreinte "$p")|" "$f" > "$f.tmp" && mv "$f.tmp" "$f"
+  printf '\n> Repris le %s par pid %s — conversation %s toujours en cours dans le pid %s (redémarrage de la machine) : dossier rattaché au process repris.\n' \
+    "$(maintenant)" "$MOI_PID" "$conv" "$p" >> "$f"
+  case $d in
+    "$SESSIONS"/closed/*) mv "$d" "$SESSIONS/open/$id" 2>/dev/null && echo "  rouvert (conversation reprise) : $id — pid $p" ;;
+    *) echo "  repris (conversation reprise) : $id — pid $p" ;;
+  esac
+  return 0
+}
+
+# reprendre_tous — tous les dossiers reprenables dont la conversation tourne encore
+reprendre_tous() {
+  local f
+  for f in "$SESSIONS"/open/*/SESSION.md "$SESSIONS"/closed/*/SESSION.md; do
+    [ -e "$f" ] || continue
+    reprendre "$f" || true
+  done
+}
+
 # Un harnais dont la session est déjà close (pane laissé ouvert) n'est pas invisible :
 # listé à part, il ouvrira une nouvelle session s'il reprend (AGENTS.md §3.3).
 sans_dossier() {
-  local p cwd emp clos n=0 inactifs=""
+  local p cwd emp clos conv n=0 inactifs=""
   [ "$CWD_SUPPORTE" = 1 ] || return 0
   for p in $(pids_nommes "$HARNAIS_CONNUS"); do
     cwd=$(cwd_de "$p") && [ -n "$cwd" ] || continue
@@ -45,6 +132,16 @@ sans_dossier() {
     grep -qsxF "empreinte: $emp" "$SESSIONS"/open/*/SESSION.md && continue
     # || true : aucune correspondance (ou motif closed/*/ vide) ne doit pas faire quitter le script (set -e + pipefail)
     clos=$(grep -lsxF "empreinte: $emp" "$SESSIONS"/closed/*/SESSION.md "$SESSIONS"/sealed/*/SESSION.md | tail -1) || true
+    # après un redémarrage de la machine, l'empreinte ne correspond plus à rien : la conversation fait le lien
+    conv=$(conversation "$p")
+    if [ -z "$clos" ] && [ -n "$conv" ]; then
+      clos=$(grep -lsxF "conversation: $conv" "$SESSIONS"/open/*/SESSION.md | head -1) || true
+      if [ -n "$clos" ]; then
+        inactifs+="  pid $p ($(nom "$p")) — conversation reprise, dossier à rattacher au prochain appel du rituel : $(basename "$(dirname "$clos")")"$'\n'
+        continue
+      fi
+      clos=$(grep -lsxF "conversation: $conv" "$SESSIONS"/closed/*/SESSION.md "$SESSIONS"/sealed/*/SESSION.md | plus_recent) || true
+    fi
     if [ -n "$clos" ]; then
       inactifs+="  pid $p ($(nom "$p")) — session close : $(basename "$(dirname "$clos")")"$'\n'
       continue
@@ -104,22 +201,34 @@ astuce() {
 }
 
 ouvrir() {
-  local harnais=${1:?usage: session.sh ouvrir <harnais> [modèle]} modele=${2:-} d id emp v pane suffixe suite n=1 clos f
+  local harnais=${1:?usage: session.sh ouvrir <harnais> [modèle]} modele=${2:-} d id emp pane suffixe suite garde= n=1
   echo "Contrôle des dossiers ouverts :"
+  # d'abord les conversations reprises après un redémarrage (la mienne comprise) : rattachées, pas closes
+  reprendre_tous
   for d in "$SESSIONS"/open/*/; do
     [ -d "$d" ] || continue
     id=$(basename "$d"); emp=$(champ empreinte "$d/SESSION.md")
     if [ "$emp" = "$MOI_EMP" ]; then
-      clore_orphelin "$id" "même process que la nouvelle session (conversation précédente, /clear ou /new)"
+      if [ -n "$MOI_CONV" ] && [ "$(champ conversation "$d/SESSION.md")" = "$MOI_CONV" ]; then
+        garde=$id   # même conversation (reprise, ou rituel relancé) : elle garde son dossier
+      else
+        clore_orphelin "$id" "même process que la nouvelle session (conversation précédente, /clear ou /new)"
+      fi
     elif [ "$(vivant "$emp")" = mort ]; then
       clore_orphelin "$id" "harnais mort"
     fi
   done
-  # Reprise après clôture (même process, pane resté ouvert) : suite de la dernière session close de ce harnais
-  # ls -t (GNU et BSD, précision sub-seconde) ; pas de xargs -r (GNU seulement) ; chemins avec espaces possibles
-  suite=""; clos=()
-  while IFS= read -r f; do clos+=("$f"); done < <(grep -lsxF "empreinte: $MOI_EMP" "$SESSIONS"/closed/*/SESSION.md "$SESSIONS"/sealed/*/SESSION.md)
-  [ ${#clos[@]} -eq 0 ] || suite=$(basename "$(dirname "$(ls -t "${clos[@]}" | head -1)")")
+  if [ -n "$garde" ]; then
+    echo "Session reprise : $garde (même conversation, dossier conservé)"
+    etat; a_consolider; maj_en_attente
+    return 0
+  fi
+  # Reprise après clôture : suite de la dernière session close de ce process, ou de cette conversation
+  # (conversation reprise après un redémarrage, dont la session avait été close normalement)
+  suite=$({ grep -lsxF "empreinte: $MOI_EMP" "$SESSIONS"/closed/*/SESSION.md "$SESSIONS"/sealed/*/SESSION.md || true
+            [ -z "$MOI_CONV" ] || grep -lsxF "conversation: $MOI_CONV" "$SESSIONS"/closed/*/SESSION.md "$SESSIONS"/sealed/*/SESSION.md || true
+          } | sort -u | plus_recent)
+  [ -z "$suite" ] || suite=$(basename "$(dirname "$suite")")
   pane=${HERDR_PANE_ID:-${TMUX_PANE:-}}; pane=${pane//[:%]/}
   suffixe=${pane:-p$MOI_PID}
   id="$(date +%F_%H-%M)_${harnais}-${suffixe}"
@@ -136,6 +245,7 @@ harnais: $harnais
 modele: $modele
 pane: ${HERDR_PANE_ID:-${TMUX_PANE:-aucun}}
 empreinte: $MOI_EMP
+conversation: $MOI_CONV
 suite_de: $suite
 
 ## Journal

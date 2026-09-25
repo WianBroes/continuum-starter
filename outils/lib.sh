@@ -15,7 +15,7 @@ case $(uname -s) in
   *) echo "Continuum : OS non pris en charge ($(uname -s)) — voir protocols/installation.md" >&2; exit 1 ;;
 esac
 # Couche OS : boot_id, starttime, zombie, mon_pid, chaine_parents, nom, mtime, date_fichier,
-# date_epoch, vieillir, maj_harnais, pids_nommes, cwd_de, CWD_SUPPORTE.
+# date_epoch, vieillir, maj_harnais, pids_nommes, cwd_de, CWD_SUPPORTE, pane_de.
 . "$RACINE/outils/os/$CONTINUUM_OS.sh"
 
 # PID du harnais : premier ancêtre qui n'est ni un shell ni un utilitaire de lancement.

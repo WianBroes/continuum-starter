@@ -73,7 +73,7 @@ for i in $(seq 1 $N); do p=$(harness); PIDS+=("$p"); AG+=("$p"); agent "$p" open
 for i in $(seq 1 $N); do
   f=$S/open/$(folder "${AG[$((i-1))]}")/SESSION.md
   echo "- log entry $i" >> "$f"
-  printf '\n## For BASE\n\nTOKEN-BASE-%s did this.\nOn two lines.\n\n## Feedback\n\n**[t]** [incident] — TOKEN-OBS-%s\n\n## STATUS +\n\n| TOKEN-STATUS-%s | 2026-09-23 | open |\n' $i $i $i >> "$f"
+  printf '\n## For BASE\n\nTOKEN-BASE-%s did this.\nOn two lines.\n\n## Feedback\n\n**[t]** [incident] — TOKEN-OBS-%s\n\n## STATUS +\n\n| Point | Open since | State |\n|---|---|---|\n| TOKEN-STATUS-%s | 2026-09-23 | open |\n' $i $i $i >> "$f"
   [ $i -le 7 ] && printf '\n## Durable facts\n\nTOKEN-FACT-%s\n' $i >> "$f"
   [ $i = 1 ] && printf '\n## Learned\n\n**TOKEN-LEARNED-1** — test learned directive.\n' >> "$f"
 done
@@ -93,6 +93,7 @@ check "A's orphan entry present" '[ "$(grep -c "$IDA\*\* — Closed without summ
 ob=0; st=0; for i in $(seq 1 $N); do [ "$(count "TOKEN-OBS-$i\$" "$V/OBSERVATIONS.md")" = 1 ] || ob=1; [ "$(count "TOKEN-STATUS-$i " "$V/STATUS.md")" = 1 ] || st=1; done
 check "observations: each exactly once" '[ $ob = 0 ]'
 check "STATUS: each line exactly once" '[ $st = 0 ]'
+check "STATUS: table header never copied" '[ "$(grep -c "^|---" "$V/STATUS.md")" = "$(git -C "$SRC" show HEAD:./STATUS.md | grep -c "^|---")" ]'
 check "learned directive inserted in §Active › Learned (automatic)" 'awk "/^### Learned \(automatic\)/{p=1;next} p&&/^##/{exit} p&&/TOKEN-LEARNED-1/{f=1} END{exit !f}" "$V/DIRECTIVES.md"'
 check "no « end: » line copied into BASE, DIRECTIVES or the archive" '! grep -q "^end: " "$V/BASE.md" "$V/DIRECTIVES.md" "$V"/_archive/*.md'
 check "sealed/ holds the 12 + A + B's 2 conversations" '[ "$(nb sealed)" -ge 15 ]'
@@ -176,6 +177,12 @@ check "the oldest by date (last in the file) is archived" '! grep -q TOKEN-OLD "
 check "History sorted by start date" 'sed -n "/^## History/,\$p" "$V/BASE.md" | grep -o "^\*\*\[[0-9-]* [0-9:]*" | sort -c'
 check "« last purge » note updated by the merge" 'grep -q "last purge: $(date +%F).*automatic merge" "$V/BASE.md"'
 check "History still at 5" '[ "$(sed -n "/^## History/,\$p" "$V/BASE.md" | grep -c "^\*\*\[")" = 5 ]'
+
+echo "T12b — normal close without « For BASE »: nothing to pass on, no BASE entry, no empty archive"
+rm -f "$V/_archive/$(date +%F)_purge.md"
+Q=$(harness); PIDS+=("$Q"); agent "$Q" open claude >/dev/null; Q1=$(folder "$Q"); agent "$Q" close >/dev/null
+check "no BASE entry for an empty session closed normally" '! grep -q "\] $Q1\*\*" "$V/BASE.md" && [ -d "$S/sealed/$Q1" ]'
+check "no archive file when nothing overflows" '[ ! -e "$V/_archive/$(date +%F)_purge.md" ]'
 
 echo "T13 — old-format header (no follows:): the merge must not crash"
 N13=$(harness); PIDS+=("$N13"); agent "$N13" open claude >/dev/null; D13=$(folder "$N13")

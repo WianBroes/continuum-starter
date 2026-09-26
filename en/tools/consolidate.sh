@@ -4,11 +4,12 @@
 # its fixed sections into the shared files, applies the BASE.md caps
 # (surplus → _archive/), moves the folder to sealed/, then commits.
 # No semantic rewriting here (that stays with an agent, under lock).
-#   ## For BASE        → BASE.md §History (« orphan » entry if empty; nothing if empty and
-#                        follows — resuming after close: btw, question, pane closed)
+#   ## For BASE        → BASE.md §History (« orphan » entry if empty and closed after the fact;
+#                        nothing if empty and closed normally — nothing to pass on — or follows:
+#                        resuming after close, btw, question, pane closed)
 #   ## Durable facts   → BASE.md §Decided
 #   ## Feedback        → end of OBSERVATIONS.md
-#   ## STATUS +        → « | … | » lines at the end of STATUS.md
+#   ## STATUS +        → « | … | » lines at the end of STATUS.md (without the table header, already in STATUS.md)
 #   ## Learned         → DIRECTIVES.md §Active › Learned (automatic) — active without waiting
 set -euo pipefail
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
@@ -30,6 +31,12 @@ section() {
     END {d=1; while (d<=n && l[d]=="") d++; f=n; while (f>=d && l[f]=="") f--; for (i=d; i<=f; i++) print l[i]}' "$1"
 }
 
+# closed_after_the_fact <SESSION.md>: the last « ## End » section comes from session.sh (dead
+# harness, same process), not from a real close.
+closed_after_the_fact() {
+  awk '/^## End/ {s=""} {s=s $0 "\n"} END {printf "%s", s}' "$1" | grep -q '^> Closed after the fact'
+}
+
 # insert <file> <section title> <text file>: inserts the text at the end of the section
 # (before the next level 2 or 3 title), removing a possible « *(empty… » line from the section.
 insert() {
@@ -48,8 +55,9 @@ insert() {
 # rewritten sorted by date: the order in the file is not reliable.
 # Updates the section's « last purge: … » note if there is one.
 cap() {
-  [ -f "$ARCHIVE" ] || printf '# Archive — purge of %s\n\n> Content moved as is (caps, protocols/learning.md). Oldest first, never rewritten.\n' "$(date +%F)" > "$ARCHIVE"
-  awk -v t="$2" -v max="$3" -v arch="$ARCHIVE" -v when="$(date '+%F %H:%M')" -v name="$(basename "$ARCHIVE")" '
+  # Header written by awk on the first addition only: no empty archive when nothing overflows.
+  local header="# Archive — purge of $(date +%F)\\n\\n> Content moved as is (caps, protocols/learning.md). Oldest first, never rewritten."
+  awk -v t="$2" -v max="$3" -v arch="$ARCHIVE" -v header="$header" -v when="$(date '+%F %H:%M')" -v name="$(basename "$ARCHIVE")" '
     function block(k,   i) { for (i = st[k]; i < st[k + 1]; i++) if (l[i] != "") print l[i] }
     function block_arch(k,   i) { for (i = st[k]; i < st[k + 1]; i++) if (l[i] != "") print l[i] >> arch }
     { l[NR] = $0 }
@@ -66,6 +74,7 @@ cap() {
       st[n + 1] = e
       for (k = 1; k <= n; k++) { key[k] = substr(l[st[k]], 4, 16) sprintf("%05d", k); o[k] = k }
       for (a = 2; a <= n; a++) { v = o[a]; b = a - 1; while (b >= 1 && key[o[b]] > key[v]) { o[b + 1] = o[b]; b-- } o[b + 1] = v }
+      if ((getline y < arch) < 0) print header >> arch; else close(arch)
       print "" >> arch; print "<!-- from " t " -->" >> arch
       for (r = 1; r <= over; r++) { block_arch(o[r]); print "" >> arch }
       for (i = 1; i < st[1]; i++) {
@@ -88,8 +97,8 @@ while IFS='|' read -r _ d; do
   end_short=$end; [ "${start%% *}" = "${end%% *}" ] && end_short=${end#* }   # same day: time only
 
   base=$(section "$f" "For BASE"); follows=$(field follows "$f")
-  if [ -n "$base" ] || [ -z "$follows" ]; then
-    [ -n "$base" ] || base="Closed without summary (orphan or incomplete close) — raw log: \`sessions/sealed/$id/\`."
+  if [ -n "$base" ] || { [ -z "$follows" ] && closed_after_the_fact "$f"; }; then
+    [ -n "$base" ] || base="Closed without summary (orphan, closed after the fact) — raw log: \`sessions/sealed/$id/\`."
     [ -z "$follows" ] || base="(follows $follows) $base"
     printf '**[%s–%s] %s** — %s\n' "$start" "$end_short" "$id" "$base" | sed '/^$/d' > "$TMP/base"
     insert "$ROOT/BASE.md" "## History" "$TMP/base"
@@ -104,7 +113,9 @@ while IFS='|' read -r _ d; do
   section "$f" "Feedback" > "$TMP/obs"
   [ -s "$TMP/obs" ] && { echo; cat "$TMP/obs"; } >> "$ROOT/OBSERVATIONS.md"
 
-  section "$f" "STATUS +" | { grep '^|' || true; } > "$TMP/status"
+  # without the table header (line followed by |---|) or the separator: STATUS.md already has its own
+  section "$f" "STATUS +" | { grep '^|' || true; } |
+    awk '{l[NR]=$0} END {for (i=1; i<=NR; i++) if (l[i] !~ /^\|[-: |]+$/ && l[i+1] !~ /^\|[-: |]+$/) print l[i]}' > "$TMP/status"
   [ -s "$TMP/status" ] && cat "$TMP/status" >> "$ROOT/STATUS.md"
 
   section "$f" "Learned" > "$TMP/learned"

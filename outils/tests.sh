@@ -70,7 +70,7 @@ for i in $(seq 1 $N); do
   f=$S/open/$(dossier "${AG[$((i-1))]}")/SESSION.md
   echo "- entrée de journal $i" >> "$f"
   titre=Retour; [ $((i % 2)) = 1 ] && titre=Observations   # ancien nom de section toujours accepté
-  printf '\n## Pour BASE\n\nJETON-BASE-%s fait ceci.\nSur deux lignes.\n\n## %s\n\n**[t]** [incident] — JETON-OBS-%s\n\n## STATUT +\n\n| JETON-STATUT-%s | 2026-09-23 | ouvert |\n' $i $titre $i $i >> "$f"
+  printf '\n## Pour BASE\n\nJETON-BASE-%s fait ceci.\nSur deux lignes.\n\n## %s\n\n**[t]** [incident] — JETON-OBS-%s\n\n## STATUT +\n\n| Point | Ouvert depuis | État |\n|---|---|---|\n| JETON-STATUT-%s | 2026-09-23 | ouvert |\n' $i $titre $i $i >> "$f"
   [ $i -le 7 ] && printf '\n## Faits durables\n\nJETON-FAIT-%s\n' $i >> "$f"
   [ $i = 1 ] && printf '\n## Apprises\n\n**JETON-PROP-1** — directive apprise de test.\n' >> "$f"
 done
@@ -90,6 +90,7 @@ verifie "entrée orpheline de A présente" '[ "$(grep -c "$IDA\*\* — Clos sans
 ob=0; st=0; for i in $(seq 1 $N); do [ "$(compte "JETON-OBS-$i\$" "$V/OBSERVATIONS.md")" = 1 ] || ob=1; [ "$(compte "JETON-STATUT-$i " "$V/STATUT.md")" = 1 ] || st=1; done
 verifie "observations : chacune exactement une fois" '[ $ob = 0 ]'
 verifie "STATUT : chaque ligne exactement une fois" '[ $st = 0 ]'
+verifie "STATUT : en-tête du tableau jamais recopié" '[ "$(grep -c "^|---" "$V/STATUT.md")" = "$(git -C "$SRC" show HEAD:./STATUT.md | grep -c "^|---")" ]'
 verifie "directive apprise insérée dans §Actives › Apprises (automatique)" 'awk "/^### Apprises \(automatique\)/{p=1;next} p&&/^##/{exit} p&&/JETON-PROP-1/{f=1} END{exit !f}" "$V/DIRECTIVES.md"'
 verifie "aucune ligne « fin: » recopiée dans BASE, DIRECTIVES ou l archive" '! grep -q "^fin: " "$V/BASE.md" "$V/DIRECTIVES.md" "$V"/_archive/*.md'
 verifie "sealed/ contient les 12 + A + 2 conversations de B" '[ "$(nb sealed)" -ge 15 ]'
@@ -173,6 +174,12 @@ verifie "la plus ancienne par date (dernière du fichier) est archivée" '! grep
 verifie "Historique trié par date de début" 'sed -n "/^## Historique/,\$p" "$V/BASE.md" | grep -o "^\*\*\[[0-9-]* [0-9:]*" | sort -c'
 verifie "note « dernière purge » mise à jour par la fusion" 'grep -q "dernière purge : $(date +%F).*fusion automatique" "$V/BASE.md"'
 verifie "Historique toujours à 5" '[ "$(sed -n "/^## Historique/,\$p" "$V/BASE.md" | grep -c "^\*\*\[")" = 5 ]'
+
+echo "T12b — clôture normale sans « Pour BASE » : rien à transmettre, ni entrée BASE ni archive vide"
+rm -f "$V/_archive/$(date +%F)_purge.md"
+Q=$(harnais); PIDS+=("$Q"); agent "$Q" ouvrir claude >/dev/null; Q1=$(dossier "$Q"); agent "$Q" clore >/dev/null
+verifie "aucune entrée BASE pour une session vide close normalement" '! grep -q "\] $Q1\*\*" "$V/BASE.md" && [ -d "$S/sealed/$Q1" ]'
+verifie "pas de fichier d archive quand rien ne déborde" '[ ! -e "$V/_archive/$(date +%F)_purge.md" ]'
 
 echo "T13 — en-tête d'ancien format (sans suite_de:) : la fusion ne doit pas planter"
 N13=$(harnais); PIDS+=("$N13"); agent "$N13" ouvrir claude >/dev/null; D13=$(dossier "$N13")

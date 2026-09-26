@@ -4,11 +4,12 @@
 # ses sections fixes dans les fichiers communs, applique les plafonds de BASE.md
 # (surplus → _archive/), déplace le dossier vers sealed/, puis commit.
 # Aucune réécriture sémantique ici (ça reste à un agent, sous verrou).
-#   ## Pour BASE       → BASE.md §Historique (entrée « orphelin » si vide ; rien si vide et
-#                        suite_de — reprise après clôture : btw, question, pane coupé)
+#   ## Pour BASE       → BASE.md §Historique (entrée « orphelin » si vide et clos a posteriori ;
+#                        rien si vide et clos normalement — rien à transmettre — ou suite_de :
+#                        reprise après clôture, btw, question, pane coupé)
 #   ## Faits durables  → BASE.md §Décidé
 #   ## Retour          → fin d'OBSERVATIONS.md (## Observations, ancien nom, accepté aussi)
-#   ## STATUT +        → lignes « | … | » en fin de STATUT.md
+#   ## STATUT +        → lignes « | … | » en fin de STATUT.md (sans l'en-tête du tableau, déjà dans STATUT.md)
 #   ## Apprises        → DIRECTIVES.md §Actives › Apprises (automatique) — actif sans attendre
 set -euo pipefail
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
@@ -30,6 +31,12 @@ section() {
     END {d=1; while (d<=n && l[d]=="") d++; f=n; while (f>=d && l[f]=="") f--; for (i=d; i<=f; i++) print l[i]}' "$1"
 }
 
+# clos_a_posteriori <SESSION.md> : la dernière section « ## Fin » vient de session.sh (harnais
+# mort, même process) et pas d'une vraie clôture.
+clos_a_posteriori() {
+  awk '/^## Fin/ {s=""} {s=s $0 "\n"} END {printf "%s", s}' "$1" | grep -q '^> Clos a posteriori'
+}
+
 # inserer <fichier> <titre de section> <fichier texte> : insère le texte en fin de section
 # (avant le titre suivant de niveau 2 ou 3), en retirant un éventuel « *(vide… » de la section.
 inserer() {
@@ -48,8 +55,9 @@ inserer() {
 # réécrite triée par date : l'ordre du fichier n'est pas fiable (héritage v0 arbitraire, 2026-09-23).
 # Met à jour la note « dernière purge : … » de la section si elle existe.
 plafonner() {
-  [ -f "$ARCHIVE" ] || printf '# Archive — purge du %s\n\n> Contenu déplacé tel quel (plafonds, protocols/apprentissage.md point 5). Le plus ancien d'"'"'abord, jamais réécrit.\n' "$(date +%F)" > "$ARCHIVE"
-  awk -v t="$2" -v max="$3" -v arch="$ARCHIVE" -v quand="$(date '+%F %H:%M')" -v nom="$(basename "$ARCHIVE")" '
+  # En-tête écrit par awk au premier ajout seulement : pas d'archive vide quand rien ne déborde.
+  local entete="# Archive — purge du $(date +%F)\\n\\n> Contenu déplacé tel quel (plafonds, protocols/apprentissage.md point 5). Le plus ancien d'abord, jamais réécrit."
+  awk -v t="$2" -v max="$3" -v arch="$ARCHIVE" -v entete="$entete" -v quand="$(date '+%F %H:%M')" -v nom="$(basename "$ARCHIVE")" '
     function bloc(k,   i) { for (i = st[k]; i < st[k + 1]; i++) if (l[i] != "") print l[i] }
     function bloc_arch(k,   i) { for (i = st[k]; i < st[k + 1]; i++) if (l[i] != "") print l[i] >> arch }
     { l[NR] = $0 }
@@ -66,6 +74,7 @@ plafonner() {
       st[n + 1] = e
       for (k = 1; k <= n; k++) { cle[k] = substr(l[st[k]], 4, 16) sprintf("%05d", k); o[k] = k }
       for (a = 2; a <= n; a++) { v = o[a]; b = a - 1; while (b >= 1 && cle[o[b]] > cle[v]) { o[b + 1] = o[b]; b-- } o[b + 1] = v }
+      if ((getline x < arch) < 0) print entete >> arch; else close(arch)
       print "" >> arch; print "<!-- depuis " t " -->" >> arch
       for (r = 1; r <= trop; r++) { bloc_arch(o[r]); print "" >> arch }
       for (i = 1; i < st[1]; i++) {
@@ -88,8 +97,8 @@ while IFS='|' read -r _ d; do
   fin_court=$fin; [ "${debut%% *}" = "${fin%% *}" ] && fin_court=${fin#* }   # même jour : heure seule
 
   base=$(section "$f" "Pour BASE"); suite=$(champ suite_de "$f")
-  if [ -n "$base" ] || [ -z "$suite" ]; then
-    [ -n "$base" ] || base="Clos sans synthèse (orphelin ou clôture incomplète) — journal brut : \`sessions/sealed/$id/\`."
+  if [ -n "$base" ] || { [ -z "$suite" ] && clos_a_posteriori "$f"; }; then
+    [ -n "$base" ] || base="Clos sans synthèse (orphelin, clos a posteriori) — journal brut : \`sessions/sealed/$id/\`."
     [ -z "$suite" ] || base="(suite de $suite) $base"
     printf '**[%s–%s] %s** — %s\n' "$debut" "$fin_court" "$id" "$base" | sed '/^$/d' > "$TMP/base"
     inserer "$RACINE/BASE.md" "## Historique" "$TMP/base"
@@ -106,7 +115,9 @@ while IFS='|' read -r _ d; do
     [ -s "$TMP/obs" ] && { echo; cat "$TMP/obs"; } >> "$RACINE/OBSERVATIONS.md"
   done
 
-  section "$f" "STATUT +" | { grep '^|' || true; } > "$TMP/statut"
+  # sans l'en-tête du tableau (ligne suivie de |---|) ni le séparateur : STATUT.md a déjà les siens
+  section "$f" "STATUT +" | { grep '^|' || true; } |
+    awk '{l[NR]=$0} END {for (i=1; i<=NR; i++) if (l[i] !~ /^\|[-: |]+$/ && l[i+1] !~ /^\|[-: |]+$/) print l[i]}' > "$TMP/statut"
   [ -s "$TMP/statut" ] && cat "$TMP/statut" >> "$RACINE/STATUT.md"
 
   section "$f" "Apprises" > "$TMP/prop"
